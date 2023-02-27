@@ -19,7 +19,7 @@ import copy
 from xml.etree import ElementTree as ET
 import utm
 
-version = "0.3.0"
+version = "0.4.0"
 
 header = {"User-Agent": "osmno/gml2osm"}
 
@@ -112,7 +112,7 @@ def get_municipality (parameter):
 
 	if parameter.isdigit():
 		if parameter in municipalities:
-			return parameter
+			return [ parameter, municipalities[parameter] ]
 		else:
 			return None
 
@@ -121,7 +121,7 @@ def get_municipality (parameter):
 		duplicate = False
 		for mun_id, mun_name in iter(municipalities.items()):
 			if parameter.lower() == mun_name.lower():
-				return mun_id
+				return [ mun_id, mun_name ]
 			elif parameter.lower() in mun_name.lower():
 				if found_id:
 					duplicate = True
@@ -129,15 +129,16 @@ def get_municipality (parameter):
 					found_id = mun_id
 
 		if found_id and not duplicate:
-			return found_id
+			return [ found_id, municipalities[found_id] ]
 		else:
 			return None
 
 
 
-def load_municipalities():
+def load_municipalities(include_svalbard = False, area_filter = ""):
 	'''
 	Load dict of all municipalities and counties.
+	Filters: "county", "municipality", or omit to get both.
 	Updates global "municipalities" dict with county and municipality code + name.
 	'''
 
@@ -146,15 +147,20 @@ def load_municipalities():
 	try:
 		file = urllib.request.urlopen(url)
 	except urllib.error.HTTPError as err:
-		message("\n\t\t*** Unable to load municipalities from GeoNorge - %s\n" % err)
+		sys.exit("\n\t\t*** Unable to load municipalities from GeoNorge - %s\n" % err)
 	data = json.load(file)
 	file.close()
 
 	municipalities['0000'] = "Norge"
 	for county in data:
-		for municipality in county['kommuner']:
-			municipalities[ municipality['kommunenummer'] ] = municipality['kommunenavnNorsk']
-		municipalities[ county['fylkesnummer'] ] = county['fylkesnavn']
+		if area_filter == "municipality" or not area_filter:
+			for municipality in county['kommuner']:
+				municipalities[ municipality['kommunenummer'] ] = municipality['kommunenavnNorsk']
+		if area_filter == "county" or not area_filter:
+			municipalities[ county['fylkesnummer'] ] = county['fylkesnavn']
+
+	if include_svalbard:
+		municipalities['2100'] = "Svalbard"
 
 
 
@@ -166,7 +172,7 @@ def clean_url (url):
 
 
 
-def load_gml (url, filename="", object_filter=[], verbose=False):
+def load_gml (url, filename="", object_filter=[], elevations=False, verbose=False):
 	'''
 	Load gml from url/file.
 	Arguments:
@@ -195,7 +201,12 @@ def load_gml (url, filename="", object_filter=[], verbose=False):
 			else:
 				[lat, lon] = [x, y]
 
-			node = ( round(lon, coordinate_decimals), round(lat, coordinate_decimals) )
+			if dimension == 3 and elevations:
+				z = float(split_coord[i+2])
+				node = ( round(lon, coordinate_decimals), round(lat, coordinate_decimals), z )
+			else:
+				node = ( round(lon, coordinate_decimals), round(lat, coordinate_decimals) )
+
 			coordinates.append(node)
 
 		return coordinates
@@ -235,7 +246,7 @@ def load_gml (url, filename="", object_filter=[], verbose=False):
 		try:
 			file_in = urllib.request.urlopen(request)
 		except urllib.error.HTTPError as err:
-			message("\n\t\t*** Unable to load file - %s\n" % err)
+			sys.exit("\n\t\t*** Unable to load file - %s\n" % err)
 		zip_file = zipfile.ZipFile(BytesIO(file_in.read()))
 
 		if verbose:
@@ -523,7 +534,7 @@ def simplify_features(features, epsilon, verbose=False):
 				feature['coordinates'] = coordinates
 
 	if verbose and total > 0:
-		message ("\tSimplified %i nodes (%i%%)\n" % (deleted, 100 * deleted/total))
+		message ("\tSimplified %i nodes with %.1f factor (%i%%)\n" % (deleted, epsilon, 100 * deleted / total))
 
 
 
@@ -553,13 +564,19 @@ def save_geojson(features, filename, gml_tags=False, verbose=False):
 					tags["GML_" + key] = value
 				else:
 					tags[ key ] = value
+
+		clean_tags = {}
+		for key, value in iter(tags.items()):
+			if value:
+				clean_tags[ key ] = value
+
 		entry = {
 			'type': 'Feature',
 			'geometry': {
 				'type': feature['type'],
 				'coordinates': feature['coordinates']
 			},
-			'properties': tags
+			'properties': clean_tags
 		}
 #		entry['properties']['GML_GEOMETRY'] = feature['type']
 
@@ -656,16 +673,21 @@ def convert_to_osm(features, merge_nodes=True, gml_tags=False):
 				else:
 					tags[ key ] = value
 
+		clean_tags = {}
+		for key, value in iter(tags.items()):
+			if value:
+				clean_tags[ key ] = value
+
 		if feature['type'] == "Point":
-			create_node(feature['coordinates'], tags)
+			create_node(feature['coordinates'], clean_tags)
 
 		elif feature['type'] == "LineString":
-			create_way(feature['coordinates'], tags)
+			create_way(feature['coordinates'], clean_tags)
 
 		elif feature['type'] == "Polygon":
 
 			if len(feature['coordinates']) == 1:
-				create_way(feature['coordinates'][0], tags)  # Single way
+				create_way(feature['coordinates'][0], clean_tags)  # Single way
 			else:
 				# Create relation member ways
 				role = "outer"
@@ -685,7 +707,7 @@ def convert_to_osm(features, merge_nodes=True, gml_tags=False):
 					'type': 'relation',
 					'id': osm_id,
 					'members': members,
-					'tags': tags
+					'tags': clean_tags
 				}
 				elements.append(relation_element)
 
