@@ -19,7 +19,7 @@ import copy
 from xml.etree import ElementTree as ET
 import utm
 
-version = "0.4.0"
+version = "0.5.0"
 
 header = {"User-Agent": "osmno/gml2osm"}
 
@@ -735,7 +735,7 @@ def indent_tree(elem, level=0):
 
 
 
-def save_osm (elements, filename, create_action=False, generator="gml2osm", verbose=False):
+def save_osm (elements, filename, generator, create_action=False, verbose=False):
 	'''
 	Output OSM file from elements dict with same structure as from Overpass.
 	Arguments:
@@ -842,7 +842,7 @@ if __name__ == '__main__':
 	if "-osm" in sys.argv:
 		elements = convert_to_osm(features, merge_nodes=True, gml_tags=True)
 		out_filename = out_filename.replace(".geojson", "") + ".osm"
-		save_osm(elements, out_filename, verbose=True)
+		save_osm(elements, out_filename, "gml2osm", verbose=True)
 	else:
 #		simplify_features(features, 0.2, verbose=True)
 		save_geojson(features, out_filename, gml_tags=True, verbose=True)
